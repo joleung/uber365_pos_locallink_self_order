@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_kiosk_golocallink" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.kiosk.golocallink</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="point_of_sale.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <!-- Add Kiosk GoLocalLink Payment setting in the self-ordering section -->
+            <xpath expr="//block[@id='self_ordering_section']" position="inside">
+                <setting string="Kiosk Payment Terminal"
+                         help="Connect kiosk to PAX payment terminal via GoLocalLink gateway"
+                         invisible="pos_self_ordering_mode != 'kiosk'">
+                    <field name="pos_kiosk_golocallink_enabled"/>
+                    <div class="content-group" invisible="not pos_kiosk_golocallink_enabled">
+                        <div class="row">
+                            <div class="col-lg-4 o_light_label">
+                                <label string="Server URL" for="pos_kiosk_golocallink_url"/>
+                            </div>
+                            <div class="col-lg-8">
+                                <field name="pos_kiosk_golocallink_url"
+                                       placeholder="http://127.0.0.1:8080"
+                                       required="pos_kiosk_golocallink_enabled"/>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-lg-4 o_light_label">
+                                <label string="Terminal ID" for="pos_kiosk_golocallink_termid"/>
+                            </div>
+                            <div class="col-lg-8">
+                                <field name="pos_kiosk_golocallink_termid"
+                                       required="pos_kiosk_golocallink_enabled"
+                                       placeholder="e.g., Terminal-01"/>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-lg-4 o_light_label">
+                                <label string="Debug Mode" for="pos_kiosk_pdq_debug_mode"/>
+                            </div>
+                            <div class="col-lg-8">
+                                <field name="pos_kiosk_pdq_debug_mode"/>
+                                <div class="text-muted small">
+                                    <i class="fa fa-warning text-warning"/> WARNING: Logs may contain sensitive payment data.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="alert alert-info mt-3" role="alert">
+                            <p class="mb-0">
+                                <strong>Note:</strong> This configuration is separate from POS staff GoLocalLink settings.
+                                Each kiosk should have its own dedicated payment terminal.
+                            </p>
+                        </div>
+                    </div>
+                </setting>
+            </xpath>
+        </field>
+    </record>
+</odoo>

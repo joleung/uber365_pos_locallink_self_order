@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="uber365_pos_locallink_self_order.GoLocalLinkPaymentStatus">
+        <div class="golocallink-payment-status" t-if="props.status.active">
+            <div class="status-container">
+                <!-- Payment Status Icon -->
+                <div class="status-icon">
+                    <i t-att-class="iconClass"/>
+                </div>
+
+                <!-- Status Message -->
+                <div class="status-message">
+                    <h2 t-esc="statusMessage"/>
+                    <p t-if="subMessage" class="sub-message" t-esc="subMessage"/>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="status-actions" t-if="showCancelButton or showForceCheckButton">
+                    <button t-if="showCancelButton"
+                            class="btn btn-secondary btn-lg cancel-button"
+                            t-on-click="props.onCancel">
+                        <i class="fa fa-times"/> Cancel Payment
+                    </button>
+                    <button t-if="showForceCheckButton"
+                            class="btn btn-warning btn-lg force-check-button"
+                            t-on-click="props.onForceDone">
+                        <i class="fa fa-refresh"/> Check Payment Status
+                    </button>
+                </div>
+            </div>
+        </div>
+    </t>
+</templates>
