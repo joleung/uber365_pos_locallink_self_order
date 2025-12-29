@@ -1,53 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <record id="view_pos_config_form_kiosk_golocallink" model="ir.ui.view">
-        <field name="name">pos.config.form.kiosk.golocallink</field>
+    <record id="view_pos_config_form_golocallink" model="ir.ui.view">
+        <field name="name">pos.config.form.golocallink</field>
         <field name="model">pos.config</field>
         <field name="inherit_id" ref="point_of_sale.pos_config_view_form"/>
         <field name="arch" type="xml">
-            <!-- Add Kiosk GoLocalLink Payment setting in the Other Devices section -->
+            <!-- Add GoLocalLink PDQ setting after ePos Printer -->
             <xpath expr="//setting[@id='other_devices']" position="after">
-                <setting string="Kiosk GoLocalLink Payment"
-                         help="Connect kiosk to PAX payment terminal via GoLocalLink gateway"
-                         invisible="self_ordering_mode != 'kiosk'">
-                    <field name="kiosk_golocallink_enabled"/>
-                    <div class="content-group" invisible="not kiosk_golocallink_enabled">
+                <setting string="GoLocalLink" help="Connect to PAX payment terminal via golocallink gateway">
+                    <field name="golocallink_enabled"/>
+                    <div class="content-group" invisible="not golocallink_enabled">
                         <div class="row">
                             <div class="col-lg-4 o_light_label">
-                                <label string="Server URL" for="kiosk_golocallink_url"/>
+                                <label string="Server URL" for="golocallink_url"/>
                             </div>
                             <div class="col-lg-8">
-                                <field name="kiosk_golocallink_url"
-                                       placeholder="http://127.0.0.1:8080"
-                                       required="kiosk_golocallink_enabled"/>
+                                <field name="golocallink_url" placeholder="https://127.0.0.1:8443"/>
                             </div>
                         </div>
                         <div class="row">
                             <div class="col-lg-4 o_light_label">
-                                <label string="Terminal ID" for="kiosk_golocallink_termid"/>
+                                <label string="Terminal ID" for="golocallink_termid"/>
                             </div>
                             <div class="col-lg-8">
-                                <field name="kiosk_golocallink_termid"
-                                       required="kiosk_golocallink_enabled"
-                                       placeholder="e.g., Terminal-01"/>
+                                <field name="golocallink_termid" required="golocallink_enabled" placeholder="e.g., 1240000000"/>
                             </div>
                         </div>
                         <div class="row">
                             <div class="col-lg-4 o_light_label">
-                                <label string="Debug Mode" for="kiosk_pdq_debug_mode"/>
+                                <label string="Debug Mode" for="pdq_debug_mode"/>
                             </div>
                             <div class="col-lg-8">
-                                <field name="kiosk_pdq_debug_mode"/>
+                                <field name="pdq_debug_mode"/>
                                 <div class="text-muted">
                                     <i class="fa fa-warning text-warning"/> WARNING: Logs may contain sensitive payment data. Only enable for troubleshooting.
                                 </div>
                             </div>
-                        </div>
-                        <div class="alert alert-info mt-3" role="alert">
-                            <p class="mb-0">
-                                <strong>Note:</strong> This is a separate configuration from the POS staff GoLocalLink settings.
-                                Each kiosk uses its own dedicated payment terminal.
-                            </p>
                         </div>
                     </div>
                 </setting>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates id="template" xml:space="preserve">
+    <t t-name="uber365_pos_locallink.PaymentScreenValidate" t-inherit="point_of_sale.PaymentScreenValidate"
+       t-inherit-mode="extension">
+        <xpath expr="." position="inside">
+            <button class="button btn btn-primary btn-lg w-50 py-3 lh-lg"
+                t-on-click="() => this.BtnPDQ()">
+                <span class="next_text">Pay by Card</span>
+            </button>
+        </xpath>
+    </t>
+
+    <!-- Inject PDQ Payment Status Section -->
+    <t t-name="uber365_pos_locallink.PaymentScreen" t-inherit="point_of_sale.PaymentScreen"
+       t-inherit-mode="extension">
+
+        <!-- For SMALL screens (mobile/tablet) - inject inside the small screen container -->
+        <xpath expr="//t[@t-if='ui.isSmall']//PaymentScreenStatus" position="before">
+            <t t-if="pdqPaymentStatus.active">
+                <PDQPaymentStatus
+                    status="pdqPaymentStatus"
+                    onCancel="() => this.cancelPDQPayment()"
+                    onForceDone="() => this.forceDonePDQPayment()" />
+            </t>
+        </xpath>
+
+        <!-- For LARGE screens (desktop) - inject inside the center-content container -->
+        <xpath expr="//div[hasclass('center-content')]//PaymentScreenStatus" position="before">
+            <t t-if="pdqPaymentStatus.active">
+                <PDQPaymentStatus
+                    status="pdqPaymentStatus"
+                    onCancel="() => this.cancelPDQPayment()"
+                    onForceDone="() => this.forceDonePDQPayment()" />
+            </t>
+        </xpath>
+
+    </t>
+</templates>

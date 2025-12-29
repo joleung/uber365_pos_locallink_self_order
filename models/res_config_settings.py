@@ -6,24 +6,23 @@ from odoo import fields, models
 class ResConfigSettings(models.TransientModel):
     _inherit = 'res.config.settings'
 
-    # Kiosk GoLocalLink settings - related to pos.config fields
-    pos_kiosk_golocallink_enabled = fields.Boolean(
-        related='pos_config_id.kiosk_golocallink_enabled',
+    pos_golocallink_enabled = fields.Boolean(
+        related='pos_config_id.golocallink_enabled',
         readonly=False,
-        string='Enable GoLocalLink for Kiosk'
+        string='Enable GoLocalLink PDQ'
     )
-    pos_kiosk_golocallink_url = fields.Char(
-        related='pos_config_id.kiosk_golocallink_url',
+    pos_golocallink_url = fields.Char(
+        related='pos_config_id.golocallink_url',
         readonly=False,
-        string='Kiosk GoLocalLink Server URL'
+        string='GoLocalLink Server URL'
     )
-    pos_kiosk_golocallink_termid = fields.Char(
-        related='pos_config_id.kiosk_golocallink_termid',
+    pos_golocallink_termid = fields.Char(
+        related='pos_config_id.golocallink_termid',
         readonly=False,
-        string='Kiosk Terminal ID'
+        string='Terminal ID'
     )
-    pos_kiosk_pdq_debug_mode = fields.Boolean(
-        related='pos_config_id.kiosk_pdq_debug_mode',
+    pos_pdq_debug_mode = fields.Boolean(
+        related='pos_config_id.pdq_debug_mode',
         readonly=False,
-        string='Kiosk PDQ Debug Mode'
+        string='PDQ Debug Mode'
     )

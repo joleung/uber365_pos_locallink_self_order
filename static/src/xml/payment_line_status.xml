@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates id="template" xml:space="preserve">
+
+    <!-- Standalone PDQ Payment Status Component Template -->
+    <t t-name="uber365_pos_locallink.PDQPaymentStatus">
+        <div class="paymentline electronic_payment pdq-status">
+
+            <!-- Waiting for Transaction Init -->
+            <t t-if="props.status.status === 'waiting'">
+                <i class="fa fa-circle-o-notch fa-spin" role="img" aria-label="Loading" title="Loading"/>
+                <span class="payment-status-info">
+                    Initiating payment...
+                </span>
+            </t>
+
+            <!-- Waiting for Card -->
+            <t t-if="props.status.status === 'waitingCard'">
+                <i class="fa fa-circle-o-notch fa-spin" role="img" aria-label="Processing" title="Processing"/>
+                <span class="payment-status-info">
+                    Waiting for card on terminal...
+                </span>
+                <div class="payment-status-buttons">
+                    <button class="btn btn-secondary btn-sm" t-on-click="props.onCancel">
+                        Cancel
+                    </button>
+                    <button class="btn btn-secondary btn-sm" t-on-click="props.onForceDone">
+                        Force Done
+                    </button>
+                </div>
+            </t>
+
+            <!-- Processing Payment -->
+            <t t-if="props.status.status === 'processing'">
+                <i class="fa fa-circle-o-notch fa-spin" role="img" aria-label="Processing" title="Processing"/>
+                <span class="payment-status-info">
+                    Processing payment of <t t-esc="env.utils.formatCurrency(props.status.amount)"/>...
+                </span>
+                <div class="payment-status-buttons">
+                    <button class="btn btn-secondary btn-sm" t-on-click="props.onForceDone">
+                        Force Done
+                    </button>
+                </div>
+            </t>
+
+            <!-- Transaction Complete (shown briefly before clearing) -->
+            <t t-if="props.status.status === 'done'">
+                <i class="fa fa-check text-success" role="img" aria-label="Success" title="Success"/>
+                <span class="payment-status-info text-success">
+                    Payment Successful
+                </span>
+            </t>
+
+        </div>
+    </t>
+
+</templates>

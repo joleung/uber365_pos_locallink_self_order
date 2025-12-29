@@ -4,301 +4,368 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-**uber365_pos_locallink_self_order** is an Odoo 19.0 module that integrates GoLocalLink payment terminals with self-ordering kiosks. It enables customers to pay for food and drinks at kiosk stations using PAX payment terminals via the GoLocalLink payment gateway.
+This is an Odoo 19 module (`uber365_pos_locallink`) that integrates PAX payment terminals with the Point of Sale system via the golocallink payment gateway using Server-Sent Events (SSE). The module enables real-time card payment processing directly from the POS interface.
 
-**Parent Framework**: Odoo 19.0 ERP/business application suite
-**Module Type**: Custom addon (located in `/devaddons/`)
-**Dependencies**: `pos_self_order`, `uber365_pos_locallink`, `point_of_sale`
+**Module Name:** `uber365_pos_locallink`
+**Module Path:** `/devaddons/uber365_pos_locallink` (within larger Odoo 19 repository)
 
-## Module Architecture
+**📖 API Documentation:** For complete GoLocalLink RESTful API documentation, see [GOLOCALLINK.md](GOLOCALLINK.md)
 
-This module follows Odoo's standard structure with Python backend (models/controllers) and OWL JavaScript frontend:
+## Architecture
 
-```
-uber365_pos_locallink_self_order/
-├── __manifest__.py              # Module metadata and dependencies
-├── __init__.py                  # Python package initialization
-├── models/                      # Backend ORM models
-│   ├── pos_config.py           # Kiosk GoLocalLink configuration fields
-│   ├── pos_payment.py          # Payment record fields for transaction metadata
-│   ├── pos_payment_method.py   # Payment initiation logic (_payment_request_from_kiosk)
-│   └── res_config_settings.py  # Settings page integration
-├── controllers/
-│   └── main.py                 # HTTP/JSON-RPC controllers for payment flow
-├── views/                      # Backend UI (XML view definitions)
-│   ├── pos_config_views.xml
-│   ├── pos_payment_views.xml
-│   └── res_config_settings_views.xml
-├── security/
-│   └── ir.model.access.csv     # Access control (currently empty - inherits only)
-└── static/src/app/             # Frontend (OWL components and services)
-    ├── components/
-    │   └── golocallink_payment_status/  # Payment status UI component
-    ├── pages/
-    │   └── payment_page/               # Payment page patch/override
-    └── services/
-        ├── golocallink_payment_service.js  # Core payment service (SSE, RPC)
-        ├── self_order_service_patch.js     # Self-order service extensions
-        └── data_service_patch.js           # Data loading patches
-```
+### Module Structure
 
-## Payment Flow Architecture
+- **Python Backend**:
+  - `models/pos_config.py`: Extends `pos.config` to add golocallink configuration (enable flag, server URL, terminal ID, debug mode)
+  - `models/pos_payment.py`: Extends `pos.payment` to store transaction metadata (UTI, card BIN, last 4 digits, auth code)
+  - `models/res_config_settings.py`: Adds golocallink settings to POS configuration screen
+  - `controllers/main.py`: Overrides `PosController._get_pos_service_worker()` to serve custom ServiceWorker (Issue #22 fix)
 
-### High-Level Flow
+- **JavaScript Frontend**:
+  - `static/src/js/pos_pdq.js`: Main payment integration
+    - Patches the `PaymentScreen` component to add "PDQ" payment button
+    - Implements SSE client for real-time communication with golocallink server
+    - Handles payment transaction flow and status updates via EventSource API
+    - Implements conditional debug logging with sensitive data masking for PCI DSS compliance
+  - `static/src/js/pdq_payment_status.js`: Payment status component
+    - **Payment status display** with reactive state management (using OWL useState)
+    - **Cancel payment** functionality - closes SSE connection and resets status
+    - **Force Done** functionality - retrieves transaction status from GoLocalLink API
+  - `static/src/app/service_worker.js`: Custom ServiceWorker (Issue #22 fix)
+    - Extends Odoo's default POS ServiceWorker
+    - Excludes `/api/events/*` (SSE endpoints) from caching
+    - Excludes `/api/sse/txn/*` and `/api/txn/*` (transaction endpoints) from caching
+    - Allows SSE connections to work without ServiceWorker interference
 
-1. **Initiate Payment** (Frontend → Backend)
-   - User clicks "Pay" on kiosk
-   - Frontend calls `/kiosk/golocallink/payment/{config_id}` (JSON-RPC)
-   - Backend creates/updates order, calls `_payment_request_from_kiosk()`
-   - Backend sends POST to GoLocalLink server to create transaction
-   - Returns UTI (Universal Transaction Identifier)
+- **Frontend UI Components**:
+  - `static/src/xml/pos_pdq.xml`: PDQ payment button template
+  - `static/src/xml/payment_line_status.xml`: Payment status display template (inherits from PaymentScreen)
+  - `static/src/scss/payment_status.scss`: Styling for payment status display (matches Odoo POS patterns)
 
-2. **Real-Time Status Updates** (Frontend ↔ GoLocalLink via SSE)
-   - Frontend connects to `/kiosk/golocallink/events/{uti}` (Server-Sent Events)
-   - Odoo backend acts as SSE proxy to GoLocalLink server
-   - Streams payment status updates: `connected` → `206` (processing) → `200A` (approved) / `200N` (declined)
+- **XML Views**:
+  - `views/pos_config_views.xml`: Adds golocallink fields to POS configuration form
+  - `views/res_config_settings_views.xml`: Adds golocallink settings panel
+  - `views/pos_payment_views.xml`: Adds transaction fields to payment tree view
 
-3. **Complete Payment** (Frontend → Backend)
-   - On approval, frontend calls `/kiosk/golocallink/complete` (JSON-RPC)
-   - Backend creates `pos.payment` record with transaction metadata
-   - Marks order as paid via `action_pos_order_paid()`
-   - Sends WebSocket notification to POS staff interface
+### Key Integration Points
 
-### Key Endpoints (controllers/main.py)
+1. **Server-Sent Events (SSE) Communication**:
+   - Frontend connects to golocallink server (configurable per POS, default: `http://127.0.0.1:8080`)
+   - API endpoint: `POST /api/sse/txn/sale` to initiate transaction
+   - Event stream: `GET /api/events/:uti` for real-time status updates
+   - UTI (Universal Transaction Identifier) tracks each transaction
+   - **ServiceWorker Override**: Custom ServiceWorker excludes SSE endpoints from caching (see [controllers/main.py](controllers/main.py:6))
+     - Fixes Issue #22: ServiceWorker was blocking SSE connections
+     - Overrides `PosController._get_pos_service_worker()` to serve [static/src/app/service_worker.js](static/src/app/service_worker.js)
 
-- **`/kiosk/golocallink/payment/<config_id>`** (JSON-RPC, auth='public')
-  - Initiates payment, returns UTI
-  - Validates access token, creates order via `process_order()`
+2. **Payment Flow**:
+   - User clicks "PDQ" button on payment screen
+   - Currency-aware amount conversion (e.g., GBP pounds → pence, JPY yen → yen)
+   - POST request to `/api/sse/txn/sale` with amount in smallest currency unit
+   - **Payment status display appears** showing "Initiating payment..."
+   - SSE connection established to `/api/events/:uti`
+   - **Status updates in real-time:**
+     - "Waiting for card on terminal..." (with Cancel + Force Done buttons)
+     - "Processing payment of £XX.XX..." (with Force Done button)
+     - "Payment Successful" (with checkmark icon)
+   - Transaction events received: progress updates, approval, or decline
+   - On approval, payment metadata stored: UTI, card BIN (first 6 digits), last 4 digits, auth code
+   - Payment automatically validated in POS
 
-- **`/kiosk/golocallink/events/<uti>`** (HTTP SSE, auth='public')
-  - Proxies SSE stream from GoLocalLink server to frontend
-  - Streams real-time payment status updates
+3. **Configuration**:
+   - Navigate to: Point of Sale > Configuration > Point of Sale (or Settings > Point of Sale > Point of Sale)
+   - Enable "GoLocalLink PDQ" checkbox
+   - Set "GoLocalLink Server URL" (e.g., `https://127.0.0.1:8443`)
+   - Set "Terminal ID" (required when enabled)
+   - Optionally enable "PDQ Debug Mode" for troubleshooting (disabled by default)
+   - Configuration stored in `pos.config` model
 
-- **`/kiosk/golocallink/complete`** (JSON-RPC, auth='public')
-  - Completes payment after terminal approval
-  - Creates `pos.payment` record with transaction data
+### Data Storage
 
-- **`/kiosk/golocallink/cancel`** (JSON-RPC, auth='public')
-  - Cancels in-progress payment
+Payment metadata fields in `pos.payment`:
+- `transaction_id`: UTI from golocallink
+- `card_no`: Last 4 digits of card
+- `pdq_card_bin`: First 6 digits of card (BIN/IIN) - custom field
+- `payment_method_authcode`: Authorization code from payment processor
+- `ticket`: Cardholder receipt data
 
-- **`/kiosk/golocallink/status/<uti>`** (JSON-RPC, auth='public')
-  - Retrieves transaction status (used when SSE connection lost)
+### Payment Status Display (Issue #23)
 
-### Frontend Service (golocallink_payment_service.js)
+**New UI Feature** - Real-time payment status display on payment screen:
 
-Reactive service providing:
-- `initiatePayment(order, amount)` - Starts payment flow
-- `connectSSE(uti, onStatusUpdate, onComplete, onError)` - Connects SSE stream
-- `cancelPayment()` - Cancels payment
-- `getTransactionStatus()` - Force-check status (fallback when SSE fails)
-- `completePayment(orderId, accessToken, transactionData)` - Finalizes payment on backend
-- `paymentStatus` - Reactive state object (status, uti, amount, eventSource)
+**Status States:**
+- **`waiting`**: "Initiating payment..." (spinner icon, no buttons)
+- **`waitingCard`**: "Waiting for card on terminal..." (spinner icon, Cancel + Force Done buttons)
+- **`processing`**: "Processing payment of £XX.XX..." (spinner icon, Force Done button)
+- **`done`**: "Payment Successful" (checkmark icon, brief display before clearing)
 
-## Development Commands
+**User Actions:**
 
-### Running the Module
+1. **Cancel Button** (available during `waitingCard` state):
+   - Closes SSE connection to GoLocalLink server
+   - Resets payment status
+   - Removes payment line if created
+   - Shows warning notification
+   - **Note:** Terminal may still process payment if card was already read
+
+2. **Force Done Button** (available during `waitingCard` and `processing` states):
+   - Retrieves transaction status from GoLocalLink API (`GET /api/txn/:uti`)
+   - Use case: Network connection lost but terminal may have processed payment
+   - Handles three scenarios:
+     - **Approved**: Stores transaction data and completes order
+     - **Declined/Cancelled**: Shows error dialog
+     - **In Progress** (status `206`): Shows dialog to wait or check terminal
+   - Displays transaction ID (UTI) for manual verification
+
+**Visual Design:**
+- Gray background (`#f0f0f0`) matching Odoo POS payment integration patterns
+- Blue spinning icon (`#0d6efd`) for processing states
+- Green checkmark (`#198754`) for success
+- Fade-in animation (300ms)
+- Responsive layout for mobile/tablet devices
+- Follows Adyen/Stripe payment integration patterns
+
+**Implementation Details:**
+- Uses OWL `useState` for reactive status tracking
+- Status stored in `pdqPaymentStatus` object with properties:
+  - `active`: Boolean - whether status display is shown
+  - `status`: String - current status state
+  - `uti`: String - transaction ID
+  - `amount`: Number - payment amount
+  - `eventSource`: EventSource - SSE connection reference for cancellation
+- Template inheritance: `point_of_sale.PaymentScreen`
+- Files: [static/src/xml/payment_line_status.xml](static/src/xml/payment_line_status.xml), [static/src/scss/payment_status.scss](static/src/scss/payment_status.scss)
+
+### Security & Compliance
+
+**PCI DSS Compliance**:
+- Debug logging disabled by default (`pdq_debug_mode=False`)
+- All debug logs mask sensitive payment data even when enabled:
+  - Card BIN (first 6 digits) → `******`
+  - Last 4 digits → `****`
+  - Authorization codes → `[MASKED]`
+- UTI/transaction ID remains visible (needed for troubleshooting, not PCI sensitive)
+
+**Debug Mode** (`pos.config.pdq_debug_mode`):
+- Controlled via UI with security warning
+- When enabled, logs payment flow for troubleshooting
+- Helper functions:
+  - `_pdqDebug(message, data)`: Conditional logging with automatic data masking
+  - `_maskSensitiveData(data)`: Masks card BIN, last 4 digits, and auth codes
+
+## Development
+
+### Module Installation
+
+Standard Odoo module installation (run from Odoo root directory):
 
 ```bash
-# IMPORTANT: This module is part of a larger Odoo instance.
-# Always include the full addons path when running odoo-bin commands:
+# Install module (first time)
+python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -i uber365_pos_locallink
 
-# Start Odoo server with this module
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19
+# Update module (after changes)
+python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink
 
-# Install this module
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -i uber365_pos_locallink_self_order
-
-# Update this module after changes
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink_self_order
-
-# Development mode with auto-reload
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 --dev=all
-
-# Quick start using script (already includes correct addons path)
-cd /Users/kaitai/dev/odoo/19/odoo && ./start.sh
+# Or via UI:
+# Apps > Update Apps List > Search "POS GoLocalLink PDQ Integration" > Install
 ```
 
-**Note**: The parent Odoo instance uses custom addon paths. The `--addons-path="addons,myaddons,devaddons"` flag ensures custom modules in `/devaddons/` are loaded.
+**Note**: Always include `--addons-path="addons,myaddons,devaddons"` to ensure custom modules in devaddons/ are found.
 
-### Testing
+### Testing Changes
 
+**Frontend Changes** (JavaScript/XML/SCSS):
+- Changes to `static/src/js/*.js`, `static/src/xml/*.xml`, or `static/src/scss/*.scss` require:
+  - Clear browser cache (hard refresh: Cmd+Shift+R / Ctrl+Shift+R), OR
+  - Restart Odoo with `--dev=all` flag for auto-reload
+- Assets bundled in `point_of_sale._assets_pos`
+- **Important**: ServiceWorker changes (`static/src/app/service_worker.js`) require:
+  1. Update module to reload controller
+  2. Unregister old ServiceWorker in browser DevTools > Application > Service Workers
+  3. Hard refresh browser
+
+**Backend Changes** (Python/Views/XML):
 ```bash
-# Run tests for this module
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d test_db \
-  -i uber365_pos_locallink_self_order --test-enable --stop-after-init
+# From Odoo root directory
+python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink
 
-# Run specific test class
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d test_db \
-  --test-tags /uber365_pos_locallink_self_order:ClassName
-
-# Currently no tests exist - would be placed in tests/ directory
+# Or with development mode (auto-reload Python on file changes)
+python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink --dev=all
 ```
 
-### Code Quality
+**Via UI**: Apps > POS GoLocalLink PDQ Integration > Upgrade
 
-```bash
-# Lint with ruff (follows parent Odoo's ruff.toml)
-cd /Users/kaitai/dev/odoo/19/odoo
-ruff check devaddons/uber365_pos_locallink_self_order
+### View File Relationship: pos_config_views.xml vs res_config_settings_views.xml
 
-# Format with ruff
-ruff format devaddons/uber365_pos_locallink_self_order
-```
+**IMPORTANT**: When adding or modifying GoLocalLink configuration fields, you typically need to update BOTH view files:
 
-## Key Technical Details
+1. **`views/pos_config_views.xml`**:
+   - Used for creating **new** POS configurations
+   - Extends individual POS configuration forms
+   - Access: Point of Sale → Configuration → Point of Sale → [Select/Create POS]
+   - Inherits from: `point_of_sale.pos_config_view_form`
 
-### Security & SSL
+2. **`views/res_config_settings_views.xml`**:
+   - Used for **updating existing** GoLocalLink configuration
+   - Provides global POS settings interface
+   - Access: Settings → Point of Sale → Point of Sale
+   - Inherits from: `point_of_sale.res_config_settings_view_form`
+   - Fields use `related='pos_config_id.field_name'` with `readonly=False`
 
-- **SSL Verification Disabled**: GoLocalLink often uses self-signed certificates
-  - `urllib3.disable_warnings()` suppresses SSL warnings
-  - `verify=False` in all `requests.get/post()` calls
-  - **Only acceptable for local network communication** (payment terminal on same network)
+**Pattern**: When adding a new field to `pos.config`:
+1. Add the field definition to `models/pos_config.py`
+2. Add the field to `views/pos_config_views.xml` (for new POS setup)
+3. Add a related field to `models/res_config_settings.py`
+4. Add the field to `views/res_config_settings_views.xml` (for updating existing config)
 
-- **Public Authentication**: All endpoints use `auth='public'`
-  - Access controlled via order access tokens (validated in `_verify_authorization()`)
-  - Payment methods use `sudo()` to bypass standard access rights for kiosk users
+**Layout Convention**:
+- Both view files use 4:8 column ratio (`col-lg-4` for labels, `col-lg-8` for fields)
+- Always wrap fields in column divs for proper Bootstrap grid layout
+- Example:
+  ```xml
+  <div class="row">
+      <label string="Field Name" for="field_name" class="col-lg-4 o_light_label"/>
+      <div class="col-lg-8">
+          <field name="field_name"/>
+      </div>
+  </div>
+  ```
 
-### PCI DSS Compliance
+This ensures users can configure the field in both contexts with consistent layout.
 
-- **Sensitive Data Handling**:
-  - Transaction data (card BIN, last 4 digits, auth codes) handled according to PCI DSS
-  - `maskSensitiveData()` function in frontend service masks data in debug logs
-  - Debug mode (`kiosk_pdq_debug_mode`) includes warning: "may contain sensitive payment data"
+### GoLocalLink Server Configuration
 
-### Configuration Fields (models/pos_config.py)
+The golocallink server URL is configurable per POS:
+- UI: Point of Sale > Configuration > Point of Sale > GoLocalLink Settings
+- Model field: `pos.config.golocallink_url`
+- Default: `http://127.0.0.1:8080`
+- Supports both HTTP and HTTPS protocols
 
-- `kiosk_golocallink_enabled` - Enable GoLocalLink for this kiosk
-- `kiosk_golocallink_url` - GoLocalLink server URL (default: `http://127.0.0.1:8080`)
-- `kiosk_golocallink_termid` - PAX terminal identifier
-- `kiosk_pdq_debug_mode` - Enable detailed logging (WARNING: logs sensitive data)
+### GoLocalLink RESTful API
 
-**Validation** (`_check_kiosk_golocallink_config`):
-- Only enables when `self_ordering_mode == 'kiosk'`
-- Requires URL and Terminal ID when enabled
-- Validates URL protocol (http:// or https://)
-- Warns if using HTTP on non-localhost
+**📖 For complete API documentation, refer to [GOLOCALLINK.md](GOLOCALLINK.md)**
 
-### Currency Handling
+The GOLOCALLINK.md file contains comprehensive API documentation including:
+- All available endpoints and their parameters
+- Complete request/response examples
+- Transaction status codes and error codes
+- Transaction processing timeline and timing details
+- Security considerations (encryption, PCI DSS compliance)
+- Error handling patterns (circuit breaker, retry logic, health checks)
+- Receipt format specifications
+- Complete transaction flow examples
 
-Amount conversion to smallest unit (e.g., £10.50 → 1050 pence):
-```python
-decimal_places = currency.decimal_places or 2
-multiplier = 10 ** decimal_places
-amount_smallest_unit = int(round(order.amount_total * multiplier))
-```
+**Quick Reference - Key Endpoints Used by This Module:**
 
-### OWL Frontend Patterns
+#### 1. `POST /api/sse/txn/sale` - Initiate Sale Transaction
 
-- **Service Registration**: `registry.category("services").add("golocallink_payment", ...)`
-- **Component Patching**: Uses `patch(PaymentPage.prototype, {...})` to extend base component
-- **Reactive State**: `reactive({...})` for payment status tracking
-- **Service Dependencies**: `dependencies: ["self_order", "notification"]`
-
-### Data Loading (_load_pos_self_data)
-
-- `pos.payment.method` uses `sudo()` in `_load_pos_self_data_search_read()` for public access
-- `_load_pos_self_data_domain()` modified to load all payment methods when GoLocalLink enabled
-- `pos.payment` exports GoLocalLink fields via `_load_pos_self_data_fields()`
-
-## Common Development Tasks
-
-### Modifying Payment Flow
-
-1. Backend logic: Edit `models/pos_payment_method.py::_payment_request_from_kiosk()`
-2. HTTP endpoints: Edit `controllers/main.py`
-3. Frontend service: Edit `static/src/app/services/golocallink_payment_service.js`
-4. UI components: Edit `static/src/app/pages/payment_page/payment_page.js` or `components/golocallink_payment_status/`
-
-After changes:
-```bash
-python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink_self_order
-# Clear browser cache for JS/CSS changes
-```
-
-### Adding New Configuration Fields
-
-1. Add field to `models/pos_config.py`
-2. Add to view in `views/pos_config_views.xml`
-3. Update constraints in `_check_kiosk_golocallink_config()` if needed
-4. Update module:
-   ```bash
-   python3 odoo-bin --addons-path="addons,myaddons,devaddons" -d odoo19 -u uber365_pos_locallink_self_order
-   ```
-
-### Debugging Payment Issues
-
-1. **Enable debug mode**: Set `kiosk_pdq_debug_mode = True` in POS Config
-2. **Check backend logs**:
-   - Watch Odoo server console output
-   - Look for `[GoLocalLink Kiosk]` prefixed messages
-3. **Check frontend console**:
-   - Browser DevTools → Console
-   - Look for `[GoLocalLink Kiosk]` prefixed messages
-4. **Verify GoLocalLink server**:
-   - Check `{kiosk_golocallink_url}/api/health` or similar endpoint
-   - Ensure terminal is powered on and connected
-
-**Common Issues**:
-- **Connection timeout**: GoLocalLink server not running or unreachable
-- **SSL errors**: Self-signed certificate issues (should be suppressed by `verify=False`)
-- **Payment method not found**: Check `payment_method_ids` on POS Config
-- **SSE connection lost**: Network interruption - use "Force Done" button to check status
-
-## Asset Management
-
-Assets loaded via `__manifest__.py`:
-```python
-'assets': {
-    'pos_self_order.assets': [
-        'uber365_pos_locallink_self_order/static/src/app/**/*.js',
-        'uber365_pos_locallink_self_order/static/src/app/**/*.xml',
-        'uber365_pos_locallink_self_order/static/src/scss/**/*.scss',
-    ],
+**Request:**
+```json
+{
+  "termid": "",
+  "amttxn": 1000,
+  "ref": "Order-001"
 }
 ```
 
-**Important**: Asset paths use module directory name, NOT absolute paths starting with `/`.
+**Important Request Notes:**
+- `termid`: Terminal ID field (currently unused by API, reserved for future use)
+- `amttxn`: Amount in **cents/pence** (1000 = $10.00 or £10.00)
+- `ref`: Reference identifier (reserved for future use)
 
-## Integration Points
+**Response (201 Created):**
+```json
+{
+  "uti": "550e8400-e29b-41d4-a716-446655440000",
+  "amountTrans": 10.00,
+  "transType": "SALE",
+  "amountCashback": 0.0,
+  "amountGratuity": 0.0
+}
+```
 
-### Depends On
-- **pos_self_order**: Base self-ordering kiosk functionality
-- **uber365_pos_locallink**: GoLocalLink integration for POS staff terminals (separate config)
-- **point_of_sale**: Core POS functionality
+**Critical Note:** The response does NOT include a `status` field. Transaction status updates come exclusively from the SSE event stream.
 
-### Extends
-- `pos.config` - Adds kiosk-specific GoLocalLink fields
-- `pos.payment.method` - Adds `_payment_request_from_kiosk()` method
-- `pos.payment` - Exports GoLocalLink transaction fields
-- `res.config.settings` - Adds settings page fields
-- `PaymentPage` (OWL) - Patches payment flow for GoLocalLink
+**Error Responses:**
+- `503` - Terminal health check failed or circuit breaker open
+- `400` - Invalid request body format
 
-### Separation from Staff POS
-This module is **separate** from `uber365_pos_locallink` (staff POS integration):
-- Different configuration fields (`kiosk_*` vs standard fields)
-- Different payment terminals (kiosk terminal vs staff terminal)
-- Different workflows (customer self-service vs cashier-operated)
+#### 2. `GET /api/events/:uti` - SSE Stream for Transaction Status
 
-## Important Conventions
+Establishes a Server-Sent Events connection for real-time transaction updates.
 
-### Python
-- Follow Odoo conventions (see parent `/CLAUDE.md`)
-- Use `_logger.info/warning/error()` for logging
-- Always use `sudo()` when accessing models from public endpoints
+**SSE Status Codes:**
 
-### JavaScript
-- Use ES6+ syntax (arrow functions, const/let, destructuring)
-- Prefix debug logs with `[GoLocalLink Kiosk]`
-- Use reactive state for UI updates
-- Import from `@odoo/owl`, `@web/core/*`, `@pos_self_order/*`
+| Status Code | Meaning | Data Included | Final State |
+|-------------|---------|---------------|-------------|
+| `connected` | SSE connection established | `uti` | No |
+| `206` | Transaction in progress (waiting for card) | `uti` | No |
+| `200A` | Transaction **approved** | `uti`, `bank_id_no`, `card_no_4digit`, `auth_code`, receipts | Yes |
+| `200N` | Transaction **declined/canceled** | `uti` | Yes |
+| `500` | Transaction **error** | `uti`, `error_code`, `error_message` | Yes |
+| `000` | Reset status (connection will close) | `uti` | Yes |
 
-### XML
-- Inherit existing views, don't replace
-- Use `position="after/before/inside/replace/attributes"`
-- Prefix XML IDs with module name to avoid conflicts
+**Approved Transaction Data (`200A`):**
+- `bank_id_no`: First 6 digits of card (BIN - Bank Identification Number)
+- `card_no_4digit`: Last 4 digits of card
+- `auth_code`: Authorization code from card issuer
+- `cardholder_receipt`: Plain text receipt for cardholder
+- `merchant_receipt`: Plain text receipt for merchant
 
-## Useful References
+**Transaction Timing (Important for UX):**
+- **Initial wait**: 10 seconds before first status poll
+- **Polling interval**: 5 seconds between status updates
+- **Maximum duration**: 2 minutes (120 seconds) before timeout
+- **Reset delay**: 8 seconds after completion before sending `000` status
+- **Connection closure**: 1 second after `000` status sent
 
-- Odoo 19 Documentation: https://www.odoo.com/documentation/19.0/
-- Parent Odoo instance: `/Users/kaitai/dev/odoo/19/odoo/CLAUDE.md`
-- GoLocalLink API: Typically documented by payment terminal provider
+This means users may wait 10+ seconds before seeing "Processing payment..." notification.
+
+**Error Handling Features:**
+- **Circuit breaker**: Opens after 5 consecutive terminal failures, remains open for 30 seconds
+- **Health checks**: Performed before every transaction, cached for 30 seconds
+- **Automatic retry**: Up to 3 attempts with exponential backoff (1s, 2s, 4s)
+- **Polling tolerance**: Tolerates up to 5 consecutive polling errors before failing
+
+See [GOLOCALLINK.md](GOLOCALLINK.md) sections on "Error Codes", "Transaction Processing Timeline", and "Error Handling" for complete details.
+
+## Important Notes
+
+- **Module Name**: `uber365_pos_locallink` (not `odoie_pos_button` - that was the old name)
+- **Parent Repository**: This module lives in `/devaddons/uber365_pos_locallink` of a larger Odoo 19 installation
+  - See `/CLAUDE.md` (Odoo root) for general Odoo development guidance
+  - Always run commands from Odoo root with `--addons-path="addons,myaddons,devaddons"`
+- **Amount Conversion**: Currency-aware conversion using `pos.currency.decimal_places`
+  - GBP/USD/EUR (2 decimals): £10.50 → 1050 pence (multiply by 10²)
+  - JPY (0 decimals): ¥100 → 100 yen (multiply by 10⁰)
+  - Currencies with 3 decimals: multiply by 10³
+- **Terminal ID**: Required field when GoLocalLink is enabled (validated by constraint in [models/pos_config.py](models/pos_config.py))
+- **Transaction Tracking**: Each transaction identified by UTI (Universal Transaction Identifier)
+- **SSE vs WebSocket**: Module uses Server-Sent Events (EventSource API), not WebSockets
+- **ServiceWorker Caveat**: Custom ServiceWorker override required for SSE to work with Odoo's offline mode (see Issue #22)
+- **Module Dependencies**: Only requires `point_of_sale` module (no external Python dependencies)
+- **Browser Compatibility**: Requires browser support for EventSource API (all modern browsers)
+- **Security**:
+  - HTTP/HTTPS protocol support; configure HTTPS for production environments
+  - PCI DSS compliant with debug mode and data masking
+  - Sensitive payment data (card BIN, last 4 digits, auth codes) always masked in logs
+  - GoLocalLink server uses AES-GCM encryption for stored transaction data
+  - See [GOLOCALLINK.md](GOLOCALLINK.md) "Security Considerations" section for complete details
+
+## Additional Documentation
+
+- [GOLOCALLINK.md](GOLOCALLINK.md) - Complete GoLocalLink RESTful API documentation
+- [README.rst](README.rst) - User-facing module documentation
+- [SPEC.md](SPEC.md) - Technical specifications (if present)
+- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Development planning (if present)
+- [PAYMENT_STATUS_REPORT.md](PAYMENT_STATUS_REPORT.md) - Payment status feature documentation (if present)
+
+**For additional technical details including:**
+- Complete error code reference
+- Circuit breaker and retry logic details
+- Transaction timing and polling behavior
+- Receipt format specifications
+- Database encryption details
+- Testing and monitoring guidance
+
+**Please refer to [GOLOCALLINK.md](GOLOCALLINK.md)**
